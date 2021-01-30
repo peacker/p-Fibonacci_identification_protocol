@@ -6,9 +6,9 @@ load "sha.m";
 
 // r := 2; p := 11; n := p+2; //l := 6;
 // r := 2; p := 3; n := p+2; 
-// r := 2; p := 20; n := p+2; // 130 sec lev
+r := 2; p := 20; n := p+2; // 130 sec lev
 // r := 2; p := 16; n := p+2; //  96 sec lev
-r := 2; p := 14; n := p+2; //  80 sec lev
+// r := 2; p := 14; n := p+2; //  80 sec lev
 
 // compute all possible determinants and their frequency (doable only for p=2,3)
 /*
@@ -136,7 +136,15 @@ RationalMatriz2Hex := function(A)
     s := "";
     for i in [1..Nrows(A)] do
         for j in [1..Ncols(A)] do
-            s := s cat IntegerToString(Numerator(A[i,j])) cat IntegerToString(Denominator(A[i,j]));
+            if A[i,j] ge 0 then
+                s := s cat "0";
+                s := s cat IntegerToString(Numerator(A[i,j])) cat IntegerToString(Denominator(A[i,j]));
+            else
+                s := s cat "1";
+                tmp := -A[i,j];
+                s := s cat IntegerToString(Numerator(tmp)) cat IntegerToString(Denominator(tmp));
+            end if;
+            
         end for;
     end for;
 
@@ -199,13 +207,6 @@ GenerateRandomError := function(M, Q, p, l)
     // generate PUBLIC KEY
     // R := M*Q + E;
     R_tmp := M*Q;
-
-    // R := ZeroMatrix(Integers(),p+1,p+1);
-    // for i in [1..Nrows(R)] do
-    //  for j in [1..Ncols(R)] do
-    //      R[i,j] := (R_tmp[i,j] + E_prime[i,j]) mod 2^l; // could also be xor
-    //  end for;
-    // end for;
     R := AddError(R_tmp, E_prime, p, l);
     E := R-R_tmp;
 
@@ -221,31 +222,7 @@ FibonacciKeyGen := function(PARAM)
     Q := Qp_matrix_power(p,n);
 
     // generate PRIVATE KEY
-    // random message
     M := RandomMessage(p+1,2^r-1);
-    // M := Matrix(Integers(), p+1, p+1, [ 1, 1, 1, 1, 1, 1, 3, 2, 1, 2, 1, 2, 1, 2, 2, 2]);
-    // random error of weight p+1
-    // E_prime :=  Matrix(p+1,p+1,[Random(1,2^l-1) : i in [1..(p+1)^2]]);
-    // i := Random(1,p+1);
-    // j := Random(1,p+1);
-    // E_prime[i,j] := 0;
-
-    /*
-    E_prime := GenerateRandomError(p,l);
-
-    // generate PUBLIC KEY
-    // R := M*Q + E;
-    R_tmp := M*Q;
-
-    // R := ZeroMatrix(Integers(),p+1,p+1);
-    // for i in [1..Nrows(R)] do
-    //  for j in [1..Ncols(R)] do
-    //      R[i,j] := (R_tmp[i,j] + E_prime[i,j]) mod 2^l; // could also be xor
-    //  end for;
-    // end for;
-    R := AddError(R_tmp, E_prime);
-    E := R-R_tmp;
-    */
     E := GenerateRandomError(M, Q, p, l);
 
     // R := AddError(M*Q, E, p, l);
@@ -287,8 +264,9 @@ end function;
 // ---------------------------------------------------------------------------
 
 ComputeC3 := function(gamma,V1,Q,V2)
-    T := ApplyGammaToMatrix(gamma, V1*Q + V2) ;
-    T_hex := RationalMatriz2Hex(T);
+    T1 := ApplyGammaToMatrix(gamma, V1*Q + V2) ;
+    T2 := -ApplyGammaToMatrix(gamma, V1*Q) ;
+    T_hex := RationalMatriz2Hex(T1) cat RationalMatriz2Hex(T2);
     c3 := Sha(T_hex,256:MsgType:="hex");
 
     return c3;
@@ -385,34 +363,11 @@ case b:
     when 1:
         tmp1 := ApplyGammaToMatrix(Gamma, (U+M)*Q);
         tmp2 := ApplyGammaToMatrix(Gamma, E);
-        response := [* tmp1, tmp2 *];
+        tmp3 := ApplyGammaToMatrix(Gamma, (U)*Q);
+        response := [* tmp1, tmp2, tmp3 *];
     when 2:
         response := [* Gamma, U *];
 end case;
-
-// "\n*******\n";
-// "c3: ";
-// "U = ", U;
-// "U*Q = ", U*Q;
-// "R = ", R;
-// // "U*Q XOR R = ", AddError(U*Q,R,p,l);
-// "U*Q + R = ", U*Q + R;
-// // T := ApplyGammaToMatrix(Gamma, AddError(U*Q,R,p,l)) ;
-// T := ApplyGammaToMatrix(Gamma, U*Q+R) ;
-// "Gamma(U*Q + R) = ", T;
-// T_hex := RationalMatriz2Hex(T);
-// "Hex(Gamma(U*Q + R)) = ", T_hex;
-// c3 := Sha(T_hex,256:MsgType:="hex");
-
-// "\n";
-
-// tmp1 := ApplyGammaToMatrix(Gamma, (U+M)*Q);
-// tmp2 := ApplyGammaToMatrix(Gamma, E);
-// "Gamma((U+M)*Q) = ", tmp1;
-// "Gamma(E) = ", tmp2;
-// // "Gamma((U+M)*Q) XOR Gamma(E) = ", AddError(tmp1, tmp2, p, l);
-// "Gamma((U+M)*Q) + Gamma(E) = ", tmp1 + tmp2;
-// "\n*******\n";
 
 "\nResponse:";
 response;
@@ -440,12 +395,12 @@ case b:
         h1 := Sha(T_hex,256:MsgType:="hex"); 
 
         // c3 ?= Hash(rsp1+rsp2)
-        // T_hex := RationalMatriz2Hex(AddError(response[1], response[2], p, l));
-        T_hex := RationalMatriz2Hex(response[1] + response[2]);
+        T_hex := RationalMatriz2Hex(response[1] + response[2]) cat RationalMatriz2Hex(-response[3]);
         h2 := Sha(T_hex,256:MsgType:="hex");
 
         if c2 eq h1                      and 
            c3 eq h2                      and
+           ((Determinant(M) eq Determinant(response[1]-response[3])) or (Determinant(M) eq -Determinant(response[1]-response[3]))) and 
            FibonacciWeight(response[2]) eq (p+1)^2-1  then
             "IDENTIFICATION SUCCESS!";
         else
@@ -512,7 +467,7 @@ R_max_length := R_max_entry_length*(p+1)^2;
 "\n|PK| = ", l * (p+1)^2;
 "\n|SK| = ", r*(p+1)^2 + l*(p+1)^2;
 "\nResponse step cost (b=0,2) = ", 2*(p+1)*Log(2,p+1) + r*(p+1)^2;
-"\nResponse step cost (b=1)   = ", 2*l*(p+1)^2;
+"\nResponse step cost (b=1)   = ", 3*l*(p+1)^2;
 
 "\nSecurity:";
 "\nLog(2,2^((p+1)^2)) = ", Log(2,2^((p+1)^2));
