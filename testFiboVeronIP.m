@@ -207,6 +207,13 @@ GenerateRandomError := function(M, Q, p, l)
     // generate PUBLIC KEY
     // R := M*Q + E;
     R_tmp := M*Q;
+
+    // R := ZeroMatrix(Integers(),p+1,p+1);
+    // for i in [1..Nrows(R)] do
+    //  for j in [1..Ncols(R)] do
+    //      R[i,j] := (R_tmp[i,j] + E_prime[i,j]) mod 2^l; // could also be xor
+    //  end for;
+    // end for;
     R := AddError(R_tmp, E_prime, p, l);
     E := R-R_tmp;
 
@@ -222,7 +229,31 @@ FibonacciKeyGen := function(PARAM)
     Q := Qp_matrix_power(p,n);
 
     // generate PRIVATE KEY
+    // random message
     M := RandomMessage(p+1,2^r-1);
+    // M := Matrix(Integers(), p+1, p+1, [ 1, 1, 1, 1, 1, 1, 3, 2, 1, 2, 1, 2, 1, 2, 2, 2]);
+    // random error of weight p+1
+    // E_prime :=  Matrix(p+1,p+1,[Random(1,2^l-1) : i in [1..(p+1)^2]]);
+    // i := Random(1,p+1);
+    // j := Random(1,p+1);
+    // E_prime[i,j] := 0;
+
+    /*
+    E_prime := GenerateRandomError(p,l);
+
+    // generate PUBLIC KEY
+    // R := M*Q + E;
+    R_tmp := M*Q;
+
+    // R := ZeroMatrix(Integers(),p+1,p+1);
+    // for i in [1..Nrows(R)] do
+    //  for j in [1..Ncols(R)] do
+    //      R[i,j] := (R_tmp[i,j] + E_prime[i,j]) mod 2^l; // could also be xor
+    //  end for;
+    // end for;
+    R := AddError(R_tmp, E_prime);
+    E := R-R_tmp;
+    */
     E := GenerateRandomError(M, Q, p, l);
 
     // R := AddError(M*Q, E, p, l);
@@ -274,6 +305,86 @@ end function;
 
 // ---------------------------------------------------------------------------
 
+ComputeResponse := function(b, Gamma, U, M, Q, E);
+    case b:
+        when 0:
+            response := [* Gamma, U+M *];
+        when 1:
+            tmp1 := ApplyGammaToMatrix(Gamma, (U+M)*Q);
+            tmp2 := ApplyGammaToMatrix(Gamma, E);
+            tmp3 := ApplyGammaToMatrix(Gamma, (U)*Q);
+            response := [* tmp1, tmp2, tmp3 *];
+        when 2:
+            response := [* Gamma, U *];
+    end case;
+    return response;
+end function;
+
+// ---------------------------------------------------------------------------
+
+VerifyResponse := function(b, response, p,Q,R,detM, c1,c2,c3)
+    "\n";
+    case b:
+        when 0:
+            // check c1,c2
+            if c1 eq ComputeC1(response[1])                and 
+               c2 eq ComputeC2(response[1],response[2],Q)  then
+                "IDENTIFICATION SUCCESS!";
+                return true;
+            else
+                "IDENTIFICATION FAILURE...";
+                return false;
+            end if;
+        when 1:
+            // check c2,c3 and Weight((E))) == (p+1)^2-1
+
+            // c2 ?= Hash(rsp1)
+            T_hex := RationalMatriz2Hex(response[1]);
+            h1 := Sha(T_hex,256:MsgType:="hex"); 
+
+            // c3 ?= Hash(rsp1+rsp2)
+            // T_hex := RationalMatriz2Hex(AddError(response[1], response[2], p, l));
+            T_hex := RationalMatriz2Hex(response[1] + response[2]) cat RationalMatriz2Hex(-response[3]);
+            h2 := Sha(T_hex,256:MsgType:="hex");
+
+            // "\n************\n";
+            // "Determinant(M)     = ", Determinant(M);
+            // "Determinant(r1-r3) = ", Determinant(response[1]-response[3]);
+            if c2 eq h1                      and 
+               c3 eq h2                      and
+               ((detM eq Determinant(response[1]-response[3])) or (detM eq -Determinant(response[1]-response[3]))) and 
+               FibonacciWeight(response[2]) eq (p+1)^2-1  then
+                "IDENTIFICATION SUCCESS!";
+                return true;
+            else
+                if c2 ne h1 then
+                    "c2 ne h1";
+                end if;
+                if c3 ne h2 then
+                    "c3 ne h2"; // *****
+                end if;
+                if FibonacciWeight(response[2]) ne (p+1)^2-1  then
+                    "FibonacciWeight(response[2]) ne (p+1)^2-1";
+                end if;
+                "IDENTIFICATION FAILURE...";
+                return false;
+            end if;
+        when 2:
+            // check c1,c3
+            if c1 eq ComputeC1(response[1])                                  and 
+               c3 eq ComputeC3(response[1],response[2],Q,R)  then
+                "IDENTIFICATION SUCCESS!";
+                return true;
+            else
+                "IDENTIFICATION FAILURE...";
+                return false;
+            end if;
+    end case;
+
+end function;
+
+// ---------------------------------------------------------------------------
+
 //t := Floor((n-k)/(2*lambda)); 
 PARAM := AssociativeArray();
 PARAM["r"] := r;
@@ -303,6 +414,7 @@ Q := PUB_KEY["Q"];
 
 M := PRIV_KEY["M"];
 E := PRIV_KEY["E"];
+detM := Determinant(M);
 
 "\nPrivate key:";
 "M = ", M;
@@ -310,6 +422,7 @@ E := PRIV_KEY["E"];
 
 "\nPublic key:";
 "R = ", R;
+"det(M) = ", detM;
 
 // try to find M',F such that 
 // - w_F(F) = w_F(E)
@@ -349,81 +462,33 @@ c3 := ComputeC3(Gamma,U,Q,R);
 c1,c2,c3;
 
 // 2. CHALLENGE
-b := Random({0,1,2});
-
+// b := Random({0,1,2});
 // b := 1;
 
-"\nChallenge:";
-b;
+// "\nChallenge:";
+// b;
 
-// 3. RESPONSE
-case b:
-    when 0:
-        response := [* Gamma, U+M *];
-    when 1:
-        tmp1 := ApplyGammaToMatrix(Gamma, (U+M)*Q);
-        tmp2 := ApplyGammaToMatrix(Gamma, E);
-        tmp3 := ApplyGammaToMatrix(Gamma, (U)*Q);
-        response := [* tmp1, tmp2, tmp3 *];
-    when 2:
-        response := [* Gamma, U *];
-end case;
+for b in [0,1,2] do
+    "\nChallenge:";
+    b;
 
-"\nResponse:";
-response;
-
-// 4. CHECK
-R := PUB_KEY["R"];
-Q := PUB_KEY["Q"];
+    // 3. RESPONSE
+    response := ComputeResponse(b, Gamma, U, M, Q, E);
 
 
-"\n";
-case b:
-    when 0:
-        // check c1,c2
-        if c1 eq ComputeC1(response[1])                and 
-           c2 eq ComputeC2(response[1],response[2],Q)  then
-            "IDENTIFICATION SUCCESS!";
-        else
-            "IDENTIFICATION FAILURE...";
-        end if;
-    when 1:
-        // check c2,c3 and Weight((E))) == (p+1)^2-1
+    "\nResponse:";
+    response;
 
-        // c2 ?= Hash(rsp1)
-        T_hex := RationalMatriz2Hex(response[1]);
-        h1 := Sha(T_hex,256:MsgType:="hex"); 
+    // 4. CHECK
+    R := PUB_KEY["R"];
+    Q := PUB_KEY["Q"];
 
-        // c3 ?= Hash(rsp1+rsp2)
-        T_hex := RationalMatriz2Hex(response[1] + response[2]) cat RationalMatriz2Hex(-response[3]);
-        h2 := Sha(T_hex,256:MsgType:="hex");
 
-        if c2 eq h1                      and 
-           c3 eq h2                      and
-           ((Determinant(M) eq Determinant(response[1]-response[3])) or (Determinant(M) eq -Determinant(response[1]-response[3]))) and 
-           FibonacciWeight(response[2]) eq (p+1)^2-1  then
-            "IDENTIFICATION SUCCESS!";
-        else
-            if c2 ne h1 then
-                "c2 ne h1";
-            end if;
-            if c3 ne h2 then
-                "c3 ne h2"; // *****
-            end if;
-            if FibonacciWeight(response[2]) ne (p+1)^2-1  then
-                "FibonacciWeight(response[2]) ne (p+1)^2-1";
-            end if;
-            "IDENTIFICATION FAILURE...";
-        end if;
-    when 2:
-        // check c1,c3
-        if c1 eq ComputeC1(response[1])                                  and 
-           c3 eq ComputeC3(response[1],response[2],Q,R)  then
-            "IDENTIFICATION SUCCESS!";
-        else
-            "IDENTIFICATION FAILURE...";
-        end if;
-end case;
+    identification_success := VerifyResponse(b, response, p,Q,R,detM, c1,c2,c3);
+
+end for;
+
+
 
 
 "\nFIBONACCI CODE INFORMATION\n";
